@@ -9,25 +9,27 @@ load_dotenv()
 
 client = OpenAI()
 MODEL_NAME = "gpt-4o-mini"
+BATCH_SIZE = 20
+SAVE_INTERVAL = 100
 
+async def normalize_product_name(product_list, prompt_template):
+    """Processes a batch of product names with the user-supplied prompt."""
+    # Build the batched prompt with the user format
+    formatted = "\n".join([f"{i+1}. {item}" for i, item in enumerate(product_list)])
+    prompt = prompt_template.format(product_list=formatted)
 
-async def normalize_product_name(product_name, prompt_template):
-    if pd.isna(product_name) or not str(product_name).strip():
-        return {} # Возвращаем пустой словарь для пустых ячеек
-
-    prompt = prompt_template.format(product_name=product_name)
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
         )
-        json_response = response.choices[0].message.content
-        return json.loads(json_response)
+        result = response.choices[0].message.content
+        return json.loads(result)
     except Exception as e:
-        print(f"!!! Ошибка при обработке '{product_name}': {e}")
-        return {"error": str(e)}
+        print(f"⚠️ Ошибка при обработке батча: {e}")
+        return [{"error": str(e)} for _ in product_list]
 
 
 async def make_request_normalize_excel_driver(excel_file, column_name, prompt_str):
@@ -35,50 +37,37 @@ async def make_request_normalize_excel_driver(excel_file, column_name, prompt_st
         print("Критическая ошибка: Переменная окружения OPENAI_API_KEY не установлена.")
         exit()
 
-    INPUT_FILE = excel_file
-    OUTPUT_FILE = f"{excel_file}_processed.xlsx" 
-    SOURCE_COLUMN = column_name
-    SAVE_INTERVAL = 100 
+    OUTPUT_FILE = f"{excel_file}_processed.xlsx"
 
     try:
-        df = pd.read_excel(INPUT_FILE)
-        print(f"Файл '{INPUT_FILE}' успешно загружен. Всего {len(df)} строк.")
+        df = pd.read_excel(excel_file)
+        print(f"Файл '{excel_file}' успешно загружен. Всего {len(df)} строк.")
     except FileNotFoundError:
-        print(f"ОШИБКА: Исходный файл '{INPUT_FILE}' не найден.")
+        print(f"ОШИБКА: Исходный файл '{excel_file}' не найден.")
         exit()
 
     if 'normalized_data' not in df.columns:
         df['normalized_data'] = None
 
     rows_to_process = df[df['normalized_data'].isnull()]
-    print(f"{len(rows_to_process)} строк осталось для обработки.")
+    product_names = rows_to_process[column_name].tolist()
+    row_indices = rows_to_process.index.tolist()
 
-    tqdm.pandas(desc="Обработка товаров")
+    print(f"{len(product_names)} строк осталось для обработки.")
 
-    for index, row in tqdm(rows_to_process.iterrows(), total=len(rows_to_process)):
-        product_name = row[SOURCE_COLUMN]
+    for i in tqdm(range(0, len(product_names), BATCH_SIZE), desc="Обработка батчей"):
+        batch = product_names[i:i + BATCH_SIZE]
+        normalized_batch = await normalize_product_name(batch, prompt_str)
 
-        normalized_result = await normalize_product_name(product_name, prompt_str)
+        for j, result in enumerate(normalized_batch):
+            df.loc[row_indices[i + j], 'normalized_data'] = json.dumps(result)
 
-        df.loc[index, 'normalized_data'] = json.dumps(normalized_result)
-
-        if (index + 1) % SAVE_INTERVAL == 0:
+        if (i + BATCH_SIZE) % SAVE_INTERVAL == 0 or (i + BATCH_SIZE) >= len(product_names):
             temp_normalized_df = pd.json_normalize(
                 df['normalized_data'].dropna().apply(json.loads)
             )
             final_df = df.drop(columns=['normalized_data']).join(temp_normalized_df)
             final_df.to_excel(OUTPUT_FILE, index=False)
 
-
-
-    # --- ФИНАЛЬНОЕ СОХРАНЕНИЕ ---
-    print("\nОбработка завершена. Финальное сохранение...")
-    final_normalized_df = pd.json_normalize(
-        df['normalized_data'].dropna().apply(json.loads)
-    )
-    final_result_df = df.drop(columns=['normalized_data']).join(final_normalized_df)
-    
-    final_result_df.to_excel(OUTPUT_FILE, index=False)
-    print(f"Результат успешно сохранен в файл: '{OUTPUT_FILE}'")
-
+    print(f"\n✅ Обработка завершена. Результат сохранен в файл: '{OUTPUT_FILE}'")
     return OUTPUT_FILE

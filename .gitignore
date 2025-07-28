@@ -26,3 +26,5 @@ Thumbs.db
 # ⚙️ Logs or runtime files (optional)
 *.log
 *.pid
+
+.prompts

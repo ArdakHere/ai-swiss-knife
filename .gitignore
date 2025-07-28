@@ -1,0 +1,28 @@
+# 🐍 Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 📦 Virtual environment
+venv/
+.env/
+
+# 🗃️ Environment & secrets
+.env
+
+# 🔧 VSCode or editor settings
+.vscode/
+.idea/
+
+# 📊 Local Excel/data files (optional – if not needed in prod)
+*.xlsx
+*.csv
+
+# 📁 OS / misc
+.DS_Store
+Thumbs.db
+
+# ⚙️ Logs or runtime files (optional)
+*.log
+*.pid
